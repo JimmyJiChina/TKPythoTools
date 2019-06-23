@@ -18,9 +18,12 @@ top.title('BF Calibration Data Analyzer')
 top.geometry('400x300')  
 plt.rcParams['figure.figsize'] = 15,15
 
-
+TAPS = 16
+PIPE_OF_GROUP = 8
+REF_PORT_TX = 1
+REF_PORT_RX = 1
 TX_CAPTURE_FILE = Template('GROUP${group}.bin')
-RX_CAPTURE_FILE = Template('/Ant${ant_num}_cap_samp.bin')
+RX_CAPTURE_FILE = Template('Ant${ant_num}_cap_samp.bin')
 RX_COE_FILE_NAME =Template('CoefsUl${dfe}.bin')
 TX_COE_FILE_NAME =Template('CoefsDl${dfe}.bin')
 FIR_DELAY = 8
@@ -83,6 +86,27 @@ def DataPlot(rx_data):
     win = CreateNewWindow(title='time domain signal ')
     fig2can(fig,win)
 
+def GroupPlot(tx_data,plot_length =None):
+    if plot_length == None:
+        plot_length = len(tx_data[0])
+    #picture_domain = len(tx_data)//2
+    fig, ax = plt.subplots(8,8)
+    pic_ind = 0
+    pipe_ind = 0
+    for row in ax:
+        for col in row:
+            col.plot(tx_data[pipe_ind].real[:plot_length])
+            col.plot(tx_data[pipe_ind].imag[:plot_length])
+            col.set_title('pipe : {}'.format(pic_ind+1))
+            pipe_ind = pipe_ind + 1
+    #plt.show()
+    
+    pic_ind = pic_ind + 1
+    fig.suptitle('time domain signal')
+    #fig.tight_layout(pad = 0.002 )
+    win = CreateNewWindow(title='time domain signal pipe ')
+    fig2can(fig,win)
+
 def fig2can(fig,win):
     canvas = FigureCanvasTkAgg(fig,win) 
     canvas.show()
@@ -108,35 +132,35 @@ def PSD(rx_data):
 
 
 
-def getdata(pathname, direction='TX'):
+def getdata(pathname, direction='TX',group_num = 8):
     if direction == 'RX':
         rx_data = list()
         for pipe in range(64) :
             filename = pathname + '/'+ RX_CAPTURE_FILE.substitute(ant_num=pipe)
             fid = open(filename,'rb')
             dd = fid.read()
-            data = np.frombuffer(dd,dtype='>i2')
+            data = np.frombuffer(dd,dtype='<i2')
             sig = data[1::2] + 1j*data[::2]
             rx_data.append(sig)
             fid.close()
         return rx_data
     elif direction =='TX':
         tx_data = list()
-        for dfe_num in range(8) :
-            filename = pathname + '/' + TX_CAPTURE_FILE.substitute(group=dfe_num)
+        for eachgroup in range(group_num) :
+            filename = pathname + '/' + TX_CAPTURE_FILE.substitute(group=eachgroup)
             fid = open(filename,'rb')
             dd = fid.read()
-            data = np.frombuffer(dd,dtype='>i2')
-            coe_dfe = data[1::2] + 1j*data[::2]
+            data = np.frombuffer(dd,dtype='<i2')
+            group_data = data[1::2] + 1j*data[::2]
             
            
-            for pipe in range(8):
-                coe = coe_dfe[TX_DATA_SECTION*pipe:TX_DATA_SECTION*pipe + TX_DATA_SECTION]
-                n1 = resample(coe,num= 4 * len(coe))
-                n2 = resample(n1,num= len(n1)//5)
-                coe = n2
-                coe = coe[TX_DATA_START-8:TX_DATA_START + TX_DATA_LENGTH+8]
-                tx_data.append(coe)
+            for pipe in range(PIPE_OF_GROUP):
+                data = group_data[TX_DATA_SECTION*pipe:TX_DATA_SECTION*pipe + TX_DATA_SECTION]
+                #n1 = resample(data,num= 4 * len(data))
+                #n2 = resample(n1,num= len(n1)//5)
+                #data = n2
+                data = data[TX_DATA_START-8:TX_DATA_START + TX_DATA_LENGTH+8]
+                tx_data.append(data)
     return tx_data
 
 
@@ -235,8 +259,43 @@ def plot_tx_data():
 def plot_rx_data():
     DataPlot(buffer_data.rx_data_list)
 
+def TX_capture_read():
+    filepath = './group_capture/'
 
+    buffer_data.tx_data_list = getdata(filepath,direction='TX',group_num=8)
+    print('TX data collected length :{}'.format(len(buffer_data.tx_data_list)))
+    print('each group data length :{}'.format(len(buffer_data.tx_data_list[0])))
+    
+    GroupPlot(buffer_data.tx_data_list,plot_length=256)
+    fir_list = TX_FIR_calc(buffer_data.tx_data_list)
+    coe_plot(fir_list)
 
+	
+def TX_FIR_calc(tx_data_list):
+    data_ref = np.matrix(tx_data_list[REF_PORT_TX][8:-8].reshape(-1,1))
+    A_list = list()
+    fir_list = list()
+    for pipe in range(len(tx_data_list)):
+        matrix_ant = np.zeros((len(data_ref),TAPS)) + np.zeros((len(data_ref),TAPS))*1j
+        for dly in range(16):
+            matrix_ant[:,dly] = tx_data_list[pipe][16-dly:16-dly + TX_DATA_LENGTH]
+        fir = get_fir(np.matrix(matrix_ant),data_ref)
+        fir_list.append(fir)
+        #A_list.append(np.matrix(matrix_ant))
+    return fir_list
+
+def get_fir(ant_measure,ant_ref):
+    corr_h = np.matmul(ant_measure.H,ant_measure)
+    xcorr_h = np.matmul(ant_measure.H,ant_ref)
+    #print('condition number:{}'.format(np.linalg.cond(Rh)))
+    corr_h = corr_h + np.max(np.abs(corr_h))*1e-7*np.eye(len(corr_h))
+    #print('condition number:{}'.format(np.linalg.cond(Rh)))
+    fir = np.matmul(np.linalg.inv(corr_h),xcorr_h)
+    return fir
+
+    
+
+   
 buffer_data = buffer_data()
 
 Button2 = tk.Button(top, text='Data Retrive', font=('Arial', 12), width=30, height=1,command = get_data)
@@ -259,6 +318,10 @@ Button7.pack()
 
 Button8 = tk.Button(top, text='RX Data Plot ', font=('Arial', 12), width=30, height=1,command = plot_rx_data)
 Button8.pack()
+
+
+Button9 = tk.Button(top, text='TX Group Read ', font=('Arial', 12), width=30, height=1,command = TX_capture_read)
+Button9.pack()
 
 
 top.mainloop()

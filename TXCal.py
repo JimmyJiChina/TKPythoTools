@@ -16,7 +16,7 @@ ANT_TOAL = 64
 REF_PORT = 46 # counting from 0
 
 
-CALPATH = '/root/Cython/TXCAL/'
+CALPATH = 'C:\\Users\\jimji\\JupyterNotebook\\AEQA_BF_Cali\\calibrationwithnotraffic\\'
 
 def get_fir(ant_measure,ant_ref):
     corr_h = np.matmul(ant_measure.H,ant_measure)
