@@ -1,6 +1,7 @@
 import numpy as np 
 
 import tkinter as tk
+from tkinter import messagebox
 from tkinter.filedialog import askdirectory
 import matplotlib
 from string import Template
@@ -20,7 +21,7 @@ plt.rcParams['figure.figsize'] = 15,15
 
 TAPS = 16
 PIPE_OF_GROUP = 8
-REF_PORT_TX = 1
+REF_PORT_TX = 7
 REF_PORT_RX = 1
 TX_CAPTURE_FILE = Template('GROUP${group}.bin')
 RX_CAPTURE_FILE = Template('Ant${ant_num}_cap_samp.bin')
@@ -32,6 +33,8 @@ TX_DATA_START = 256
 TX_DATA_LENGTH = 2048
 TX_DATA_SECTION = 2560
 CAPTURE_LENGTH = 20480
+TX_FIR_FILE_NAME = 'TX_FIR.bin'
+RX_FIR_FILE_NAME = 'RX_FIR.bin'
 
 class buffer_data:
     def __init__(self):
@@ -266,11 +269,16 @@ def TX_capture_read():
     print('TX data collected length :{}'.format(len(buffer_data.tx_data_list)))
     print('each group data length :{}'.format(len(buffer_data.tx_data_list[0])))
     
-    GroupPlot(buffer_data.tx_data_list,plot_length=256)
+    #GroupPlot(buffer_data.tx_data_list,plot_length=256)
     fir_list = TX_FIR_calc(buffer_data.tx_data_list)
-    coe_plot(fir_list)
+    #print(fir_list)
+    print(len(fir_list))
+    print(fir_list[0])
+    #coe_plot(fir_list)
+    FIR_file_create(fir_list,direction='TX')
+    messagebox.showinfo('NOTICE','TX Cal File Created' )
 
-	
+
 def TX_FIR_calc(tx_data_list):
     data_ref = np.matrix(tx_data_list[REF_PORT_TX][8:-8].reshape(-1,1))
     A_list = list()
@@ -280,6 +288,7 @@ def TX_FIR_calc(tx_data_list):
         for dly in range(16):
             matrix_ant[:,dly] = tx_data_list[pipe][16-dly:16-dly + TX_DATA_LENGTH]
         fir = get_fir(np.matrix(matrix_ant),data_ref)
+        #print(fir)
         fir_list.append(fir)
         #A_list.append(np.matrix(matrix_ant))
     return fir_list
@@ -291,10 +300,31 @@ def get_fir(ant_measure,ant_ref):
     corr_h = corr_h + np.max(np.abs(corr_h))*1e-7*np.eye(len(corr_h))
     #print('condition number:{}'.format(np.linalg.cond(Rh)))
     fir = np.matmul(np.linalg.inv(corr_h),xcorr_h)
+    #fir = fir/np.max(np.abs(fir))*32768
     return fir
+    #return np.frombuffer(fir)
 
-    
-
+def FIR_file_create(fir_list,direction='TX'):
+    if direction=='TX':
+        filename = TX_FIR_FILE_NAME
+    if direction=='RX':
+        filename = RX_FIR_FILE_NAME 
+    with open(filename,'wb') as fid:
+        for pipe,eachfir in enumerate(fir_list):
+            max_fir = np.max(np.abs(eachfir))
+            #import pdb;pdb.set_trace()
+            coe_list = np.zeros(len(eachfir)*2*2)
+            coe_list[:len(eachfir)*2:2] = np.frombuffer(np.array(eachfir.imag))/max_fir*(2**15-1)
+            coe_list[1:len(eachfir)*2:2] = np.frombuffer(np.array(eachfir.real))/max_fir*(2**15-1)
+            #fir_imag = (np.frombuffer(np.array(eachfir.imag))/max_fir*2**15).astype('uint16')
+            #coe_list = ['{0:04X}{1:04X}'.format(x,y) for x,y in zip(fir_real,fir_imag)]
+            #coe_list = [y*2**16+x for x,y in zip(fir_real,fir_imag)]
+        
+            print(pipe)
+            print(coe_list)
+            for eachcoe in coe_list:
+                fid.write(int(eachcoe).to_bytes(2,byteorder = 'little',signed=True))
+                #fid.write(eachcoe.encode('UTF-8'))
    
 buffer_data = buffer_data()
 
